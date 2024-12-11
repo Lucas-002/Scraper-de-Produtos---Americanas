@@ -1,0 +1,205 @@
+
+
+from selenium import webdriver
+from selenium.webdriver.firefox.service import Service
+from selenium.webdriver.common.by import By
+import pandas as pd
+import time
+import random
+import os
+import tkinter as tk
+from tkinter import filedialog
+
+
+# Caminho correto para o GeckoDriver (ajuste conforme sua localização no sistema)
+driver_path = "D:/geckodriver-v0.35.0-win32/geckodriver.exe"
+firefox_binary_path = "C:/Program Files/Mozilla Firefox/firefox.exe"  # Caminho correto para o Firefox
+
+# Verifique se o caminho existe
+if not os.path.exists(driver_path):
+    raise FileNotFoundError(f"GeckoDriver não encontrado no caminho: {driver_path}")
+if not os.path.exists(firefox_binary_path):
+    raise FileNotFoundError(f"Firefox não encontrado no caminho: {firefox_binary_path}")
+
+
+# Configuração do serviço
+service = Service(driver_path)
+options = webdriver.FirefoxOptions()
+options.binary_location = firefox_binary_path
+
+
+# Função para iniciar navegador
+def iniciar_navegador():
+    driver = webdriver.Firefox(service=service, options=options)
+    return driver
+
+
+# Função para coletar dados de cada produto
+def scrape_product(driver, link):
+    driver.get(link)
+    time.sleep(3)  # Espera o carregamento da página
+
+    try:
+        # Obtendo dados da descrição
+        description = driver.find_element(By.CLASS_NAME, "product-title__Title-sc-1hlrxcw-0").text
+    except:
+        description = "Descrição não encontrada"
+
+    try:
+        # Obtendo preço
+        price = driver.find_element(By.CLASS_NAME, "styles__PriceText-sc-1o94vuj-0").text
+    except:
+        price = "Preço não encontrado"
+
+    try:
+        # Obtendo imagem
+        image = driver.find_element(By.TAG_NAME, "img").get_attribute("src")
+    except:
+        image = "Imagem não encontrada"
+
+    return {
+        "id_produto": None,  # Será atualizado posteriormente
+        "link": link,
+        "descrição": description,
+        "preço": price,
+        "imagem": image,
+        "loja": "Americanas"
+    }
+
+
+# Caminho para salvar os dados da planilha
+output_path = "produtos_americanas.xlsx"
+
+
+# Carregar links da planilha
+def carregar_arquivo(caminho_arquivo):
+    try:
+        # Lendo a planilha
+        df = pd.read_excel(caminho_arquivo)
+
+        if df.empty:
+            print("Erro: Planilha está vazia.")
+            return []
+
+        # Capturando links da primeira coluna
+        data = df.iloc[:, 0].dropna().tolist()
+        print(f"Links carregados: {len(data)}")
+        return data
+    except Exception as e:
+        print(f"Erro ao carregar a planilha: {str(e)}")
+        return []
+
+
+# Diagnóstico e criação da planilha de banco de dados
+def diagnostico_e_preparacao(links):
+    # Verificar se a planilha existe
+    if not os.path.exists(output_path):
+        # Criar a planilha vazia com colunas definidas
+        df = pd.DataFrame(columns=["id_produto", "link", "descrição", "preço", "imagem", "loja"])
+        df.to_excel(output_path, index=False)
+        print("A planilha 'produtos_americanas' foi criada.")
+        return df, []
+
+    # Se a planilha existir, carregue-a
+    try:
+        df = pd.read_excel(output_path)
+        print("Planilha 'produtos_americanas' carregada com sucesso.")
+    except Exception as e:
+        print(f"Erro ao carregar a planilha 'produtos_americanas': {e}")
+        raise
+
+    # Identificar links repetidos
+    links_existentes = df["link"].tolist()
+    alteracoes = []  # Para armazenar detalhes de mudanças
+
+    max_id = df["id_produto"].max() if not df.empty else 0
+
+    for link in links:
+        if link in links_existentes:
+            # Atualizar dados se o link já existir
+            idx = df[df["link"] == link].index[0]
+            id_produto = df.at[idx, "id_produto"]
+            alteracoes.append(f"Link repetido encontrado. ID {id_produto} será atualizado.")
+            print(f"ID {id_produto}: Atualizando os dados.")
+        else:
+            # Adicionar um novo item à planilha com ID incremental
+            max_id += 1
+            df = pd.concat(
+                [df, pd.DataFrame([{"id_produto": max_id, "link": link}])],
+                ignore_index=True
+            )
+            alteracoes.append(f"Novo link adicionado com ID {max_id}.")
+            print(f"ID {max_id}: Foi criado.")
+
+    # Salvar a planilha atualizada
+    df.to_excel(output_path, index=False)
+    print("Planilha 'produtos_americanas' atualizada com alterações.")
+
+    return df, alteracoes
+
+
+# Loop principal com intervalos seguros e reinicialização de navegador
+results = []
+def processar_links(links):
+    for index, link in enumerate(links):
+        print(f"Iniciando novo navegador para o link: {link}")
+
+        # Inicializa o navegador
+        driver = iniciar_navegador()
+
+        try:
+            print(f"Raspando dados do link: {link}")
+            product_data = scrape_product(driver, link)
+            results.append(product_data)
+        except Exception as e:
+            print(f"Erro no link {link}: {e}")
+        finally:
+            driver.quit()
+
+        # Intervalo aleatório para evitar sobrecarga
+        intervalo_espera = random.uniform(1, 5)
+        print(f"Aguardando {intervalo_espera:.2f} segundos antes do próximo link...")
+        time.sleep(intervalo_espera)
+
+
+# Execução principal
+root = tk.Tk()
+root.withdraw()
+
+caminho_arquivo = filedialog.askopenfilename(
+    title="Selecione a planilha com os links",
+    filetypes=[("Arquivos Excel", "*.xls;*.xlsx")]
+)
+
+root.destroy()
+
+if caminho_arquivo:
+    links = carregar_arquivo(caminho_arquivo)
+    if links:
+        # Diagnóstico e preparação antes de processar links
+        df_banco, alteracoes = diagnostico_e_preparacao(links)
+
+        # Imprimir diagnóstico detalhado
+        print("\n--- Diagnóstico Detalhado ---")
+        if alteracoes:
+            for alteracao in alteracoes:
+                print(alteracao)
+        else:
+            print("Nenhuma alteração necessária. Todos os links são novos.")
+
+        # Continuar com a raspagem
+        print(f"Iniciando raspagem para {len(links)} links...")
+        processar_links(links)
+
+        # Adicionar os dados raspados na planilha com IDs incrementais
+        max_id = df_banco["id_produto"].max() if not df_banco.empty else 0
+        for i, data in enumerate(results, start=1):
+            data["id_produto"] = max_id + i
+
+        # Combinar os dados e salvar
+        new_data = pd.DataFrame(results)
+        combined_data = pd.concat([df_banco, new_data], ignore_index=True)
+        combined_data.to_excel(output_path, index=False)
+        print("Planilha 'produtos_americanas' salva com os novos dados.")
+else:
+    print("Nenhum arquivo selecionado.")
